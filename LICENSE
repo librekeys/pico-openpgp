@@ -18,6 +18,11 @@ The project is using the following libraries, sdk or portions of code:
   License, https://github.com/raspberrypi/pico-sdk
 - Espressif IoT Development Framework (ESP-IDF), licensed under Apache
   License Version 2.0, https://github.com/espressif/esp-idf
+- yubico-piv-tool (for running tests only), licensed under the BSD 
+  license, and that also contains code distributed under the terms of 
+  the OASIS IPR Policy, https://github.com/Yubico/yubico-piv-tool/
+- GnuK, distributed under the GPLv3+, 
+  https://salsa.debian.org/gnuk-team/gnuk
 
 ________________________________________________________________________
 
