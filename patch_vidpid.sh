@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #
-# This file is part of the Pico OpenPGP distribution (https://github.com/librekeys/pico-openpgp).
+# This file is part of the Pico OpenPGP distribution (https://github.com/polhenarejos/pico-openpgp).
 # Copyright (c) 2022 Pol Henarejos.
 #
 # This program is free software: you can redistribute it and/or modify
