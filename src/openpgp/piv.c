@@ -31,6 +31,7 @@
 #include "asn1.h"
 #include "mbedtls/aes.h"
 #include "mbedtls/des.h"
+#include "mbedtls/ecdh.h"
 #include "mbedtls/x509_crt.h"
 #include "openpgp.h"
 
@@ -606,10 +607,11 @@ static int cmd_authenticate() {
     if (!asn1_find_tag(&ctxi, 0x7C, &a7c) || asn1_len(&ctxi) == 0) {
         return SW_WRONG_DATA();
     }
-    asn1_ctx_t a80 = { 0 }, a81 = { 0 }, a82 = { 0 };
+    asn1_ctx_t a80 = { 0 }, a81 = { 0 }, a82 = { 0 }, a85 = { 0 };
     asn1_find_tag(&a7c, 0x80, &a80);
     asn1_find_tag(&a7c, 0x81, &a81);
     asn1_find_tag(&a7c, 0x82, &a82);
+    asn1_find_tag(&a7c, 0x85, &a85);
     if (a80.data) {
         if (a80.len == 0) {
             memcpy(challenge, random_bytes_get(sizeof(challenge)), sizeof(challenge));
@@ -832,6 +834,64 @@ static int cmd_authenticate() {
             if (memcmp(res_APDU, challenge, chal_len) != 0) {
                 return SW_DATA_INVALID();
             }
+        }
+    }
+    if (a85.data) {
+        if (algo == PIV_ALGO_ECCP256 || algo == PIV_ALGO_ECCP384) {
+            file_t *ef_key = search_by_fid(key_ref, NULL, SPECIFY_EF);
+            if (!file_has_data(ef_key)) {
+                return SW_MEMORY_FAILURE();
+            }
+            mbedtls_ecdsa_context ecdsa_ctx;
+            mbedtls_ecdsa_init(&ecdsa_ctx);
+            int r = load_private_key_ecdsa(&ecdsa_ctx, ef_key, false);
+            if (r != PICOKEY_OK) {
+                mbedtls_ecdsa_free(&ecdsa_ctx);
+                return SW_EXEC_ERROR();
+            }
+            mbedtls_ecdh_context ecdh_ctx;
+            mbedtls_ecdh_init(&ecdh_ctx);
+            mbedtls_ecp_group_id gid = ecdsa_ctx.grp.id;
+            r = mbedtls_ecdh_setup(&ecdh_ctx, gid);
+            if (r != 0) {
+                mbedtls_ecdsa_free(&ecdsa_ctx);
+                mbedtls_ecdh_free(&ecdh_ctx);
+                return SW_EXEC_ERROR();
+            }
+            r = mbedtls_mpi_copy(&ecdh_ctx.ctx.mbed_ecdh.d, &ecdsa_ctx.d);
+            mbedtls_ecdsa_free(&ecdsa_ctx);
+            if (r != 0) {
+                mbedtls_ecdh_free(&ecdh_ctx);
+                return SW_EXEC_ERROR();
+            }
+            // mbedtls_ecdh_read_public expects TLS format: [length][point_data]
+            // PIV tag 0x85 contains raw uncompressed point: [04][X][Y]
+            uint8_t pub_buf[1 + MBEDTLS_ECP_MAX_PT_LEN];
+            pub_buf[0] = (uint8_t)a85.len;
+            memcpy(pub_buf + 1, a85.data, a85.len);
+            r = mbedtls_ecdh_read_public(&ecdh_ctx, pub_buf, a85.len + 1);
+            if (r != 0) {
+                mbedtls_ecdh_free(&ecdh_ctx);
+                return SW_DATA_INVALID();
+            }
+            size_t olen = 0;
+            uint8_t shared_secret[MBEDTLS_ECP_MAX_BYTES];
+            r = mbedtls_ecdh_calc_secret(&ecdh_ctx, &olen, shared_secret,
+                                          sizeof(shared_secret), random_gen, NULL);
+            mbedtls_ecdh_free(&ecdh_ctx);
+            if (r != 0) {
+                return SW_EXEC_ERROR();
+            }
+            res_APDU[res_APDU_size++] = 0x7C;
+            res_APDU[res_APDU_size++] = olen + 2;
+            res_APDU[res_APDU_size++] = 0x82;
+            res_APDU[res_APDU_size++] = olen;
+            memcpy(res_APDU + res_APDU_size, shared_secret, olen);
+            res_APDU_size += olen;
+            mbedtls_platform_zeroize(shared_secret, sizeof(shared_secret));
+        }
+        else {
+            return SW_INCORRECT_P1P2();
         }
     }
     if (meta[1] == PINPOLICY_ALWAYS) {
